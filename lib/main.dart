@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:math' as math;
 
 void main() {
@@ -32,10 +33,10 @@ class _ParticleCanvasState extends State<ParticleCanvas>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late List<Particle> _particles;
-  Offset _mousePosition = Offset.zero;
-  bool _isMouseInside = false;
+  Offset _touchPosition = Offset.zero;
+  bool _isTouching = false;
   bool _isDispersing = true;
-  static const int _particleCount = 300; // 800→300に削減
+  static const int _particleCount = 300;
   Size _canvasSize = Size.zero;
   final math.Random _random = math.Random();
 
@@ -45,7 +46,7 @@ class _ParticleCanvasState extends State<ParticleCanvas>
     _particles = [];
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 16), // 60fps
+      duration: const Duration(milliseconds: 16),
     )..addListener(_updateParticles);
     _controller.repeat();
   }
@@ -74,8 +75,7 @@ class _ParticleCanvasState extends State<ParticleCanvas>
         depth: depth,
       );
     });
-    
-    // 深度でソート（一度だけ）
+
     _particles.sort((a, b) => a.depth.compareTo(b.depth));
   }
 
@@ -83,10 +83,10 @@ class _ParticleCanvasState extends State<ParticleCanvas>
     if (_particles.isEmpty || _canvasSize == Size.zero) return;
 
     for (var p in _particles) {
-      if (_isMouseInside) {
-        final dx = p.x - _mousePosition.dx;
-        final dy = p.y - _mousePosition.dy;
-        final distSq = dx * dx + dy * dy; // sqrt を避ける
+      if (_isTouching) {
+        final dx = p.x - _touchPosition.dx;
+        final dy = p.y - _touchPosition.dy;
+        final distSq = dx * dx + dy * dy;
         final maxDistSq = 200.0 * 200.0;
 
         if (distSq < maxDistSq && distSq > 0) {
@@ -133,12 +133,14 @@ class _ParticleCanvasState extends State<ParticleCanvas>
 
   @override
   Widget build(BuildContext context) {
+    // デバイス判定（画面幅でモバイル判定）
+    final isMobile = MediaQuery.of(context).size.width < 600;
+
     return Scaffold(
       body: Stack(
         children: [
-          // 背景（静的なのでconstに）
           const _Background(),
-          
+
           // パーティクルキャンバス
           LayoutBuilder(
             builder: (context, constraints) {
@@ -149,19 +151,43 @@ class _ParticleCanvasState extends State<ParticleCanvas>
                   _initializeParticles();
                 });
               }
-              return MouseRegion(
-                onEnter: (_) => _isMouseInside = true,
-                onExit: (_) => _isMouseInside = false,
-                onHover: (event) => _mousePosition = event.localPosition,
-                child: GestureDetector(
-                  onTap: () => setState(() => _isDispersing = !_isDispersing),
+              return GestureDetector(
+                // タップでモード切替
+                onTap: () => setState(() => _isDispersing = !_isDispersing),
+                
+                // タッチ開始
+                onPanStart: (details) {
+                  _isTouching = true;
+                  _touchPosition = details.localPosition;
+                },
+                
+                // タッチ移動（ドラッグ）
+                onPanUpdate: (details) {
+                  _touchPosition = details.localPosition;
+                },
+                
+                // タッチ終了
+                onPanEnd: (_) {
+                  _isTouching = false;
+                },
+                
+                // タッチキャンセル
+                onPanCancel: () {
+                  _isTouching = false;
+                },
+                
+                child: MouseRegion(
+                  // マウス操作（PC用）
+                  onEnter: (_) => _isTouching = true,
+                  onExit: (_) => _isTouching = false,
+                  onHover: (event) => _touchPosition = event.localPosition,
                   child: RepaintBoundary(
                     child: CustomPaint(
                       size: Size.infinite,
                       painter: ParticlePainter(
                         particles: _particles,
-                        mousePosition: _mousePosition,
-                        isMouseInside: _isMouseInside,
+                        touchPosition: _touchPosition,
+                        isTouching: _isTouching,
                         isDispersing: _isDispersing,
                       ),
                     ),
@@ -170,22 +196,22 @@ class _ParticleCanvasState extends State<ParticleCanvas>
               );
             },
           ),
-          
-          // UI（静的要素をRepaintBoundaryで分離）
+
+          // UI
           RepaintBoundary(
-            child: _buildUI(),
+            child: _buildUI(isMobile),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildUI() {
+  Widget _buildUI(bool isMobile) {
     return Stack(
       children: [
         // タイトル
         Positioned(
-          top: 40,
+          top: isMobile ? 60 : 40,
           left: 0,
           right: 0,
           child: Center(
@@ -195,13 +221,13 @@ class _ParticleCanvasState extends State<ParticleCanvas>
                   shaderCallback: (bounds) => const LinearGradient(
                     colors: [Color(0xFF00f5ff), Color(0xFFff00ff)],
                   ).createShader(bounds),
-                  child: const Text(
+                  child: Text(
                     'PARTICLE DANCE',
                     style: TextStyle(
-                      fontSize: 36,
+                      fontSize: isMobile ? 24 : 36,
                       fontWeight: FontWeight.bold,
                       color: Colors.white,
-                      letterSpacing: 8,
+                      letterSpacing: isMobile ? 4 : 8,
                     ),
                   ),
                 ),
@@ -215,7 +241,7 @@ class _ParticleCanvasState extends State<ParticleCanvas>
                   child: Text(
                     _isDispersing ? '🌀 拡散モード' : '✨ 収束モード',
                     style: TextStyle(
-                      fontSize: 16,
+                      fontSize: isMobile ? 14 : 16,
                       color: _isDispersing
                           ? const Color(0xFF00f5ff)
                           : const Color(0xFFff00ff),
@@ -227,26 +253,42 @@ class _ParticleCanvasState extends State<ParticleCanvas>
             ),
           ),
         ),
+        
         // 操作説明
         Positioned(
-          bottom: 40,
-          left: 0,
-          right: 0,
+          bottom: isMobile ? 60 : 40,
+          left: 16,
+          right: 16,
           child: Center(
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              padding: EdgeInsets.symmetric(
+                horizontal: isMobile ? 16 : 24,
+                vertical: 12,
+              ),
               decoration: BoxDecoration(
                 color: Colors.black54,
                 borderRadius: BorderRadius.circular(25),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.mouse, color: Colors.white54, size: 20),
-                  SizedBox(width: 8),
-                  Text(
-                    'マウスを動かして粒子を操作  •  クリックでモード切替',
-                    style: TextStyle(color: Colors.white54, fontSize: 14),
+                  Icon(
+                    isMobile ? Icons.touch_app : Icons.mouse,
+                    color: Colors.white54,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      isMobile
+                          ? '指でなぞって操作 • タップでモード切替'
+                          : 'マウスで操作 • クリックでモード切替',
+                      style: TextStyle(
+                        color: Colors.white54,
+                        fontSize: isMobile ? 12 : 14,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
                   ),
                 ],
               ),
@@ -258,7 +300,6 @@ class _ParticleCanvasState extends State<ParticleCanvas>
   }
 }
 
-// 背景を分離（再描画を避ける）
 class _Background extends StatelessWidget {
   const _Background();
 
@@ -276,7 +317,6 @@ class _Background extends StatelessWidget {
   }
 }
 
-// シンプルなパーティクルクラス（メモリ効率化）
 class Particle {
   double x, y;
   double homeX, homeY;
@@ -300,11 +340,10 @@ class Particle {
 
 class ParticlePainter extends CustomPainter {
   final List<Particle> particles;
-  final Offset mousePosition;
-  final bool isMouseInside;
+  final Offset touchPosition;
+  final bool isTouching;
   final bool isDispersing;
 
-  // Paintオブジェクトを再利用
   final Paint _particlePaint = Paint();
   final Paint _corePaint = Paint()..color = Colors.white70;
   final Paint _ringPaint = Paint()
@@ -313,33 +352,29 @@ class ParticlePainter extends CustomPainter {
 
   ParticlePainter({
     required this.particles,
-    required this.mousePosition,
-    required this.isMouseInside,
+    required this.touchPosition,
+    required this.isTouching,
     required this.isDispersing,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    // パーティクル描画（シンプル化）
     for (var p in particles) {
       final alpha = (0.4 + p.depth * 0.6).clamp(0.0, 1.0);
-      
-      // メイン粒子
+
       _particlePaint.color = p.color.withValues(alpha: alpha);
       canvas.drawCircle(Offset(p.x, p.y), p.size * 2, _particlePaint);
 
-      // コア（白い中心点）
       _corePaint.color = Colors.white.withValues(alpha: alpha * 0.6);
       canvas.drawCircle(Offset(p.x, p.y), p.size * 0.5, _corePaint);
     }
 
-    // マウスカーソル周りのエフェクト（シンプル化）
-    if (isMouseInside) {
+    if (isTouching) {
       _ringPaint.color = (isDispersing
               ? const Color(0xFF00f5ff)
               : const Color(0xFFff00ff))
           .withValues(alpha: 0.4);
-      canvas.drawCircle(mousePosition, 80, _ringPaint);
+      canvas.drawCircle(touchPosition, 80, _ringPaint);
     }
   }
 
